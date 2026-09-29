@@ -1,9 +1,15 @@
-# install.ps1 -- register the two scheduled tasks codex-save-dsh needs.
+# install.ps1 -- register the three scheduled tasks codex-save-dsh needs.
 #
 # ASCII only, deliberately: PS 5.1 mis-decodes non-BOM UTF-8 literals.
 #
 # This script REGISTERS NOTHING until you confirm. It prints every path it is about to
-# use and the exact two tasks it will register, then asks for y/N.
+# use and the exact three tasks it will register, then asks for y/N.
+#
+# The printed plan and the registration below must agree FIELD FOR FIELD -- the plan is
+# the only thing an operator reads before saying yes, so a plan that disagrees with what
+# gets registered is a lie told at exactly the moment a lie is most expensive. A defect of
+# exactly that kind lived in this file: the starter's RunLevel was quoted in the plan and
+# not applied to the principal. Both are built from the same variables now.
 #
 # HONEST NOTE ABOUT THE SYSTEM TASK: the guard is registered as NT AUTHORITY\SYSTEM so
 # that it cannot draw a console on, or be killed from, the interactive desktop. SYSTEM
@@ -21,9 +27,15 @@ param(
   [Parameter(Mandatory=$true)][string]$SessionDir,
   [string]$UserHome    = $env:USERPROFILE,
   [string]$InstallRoot = $PSScriptRoot,
-  [string]$StateDir    = (Join-Path $PSScriptRoot 'state'),
+  # Must resolve to the SAME directory the guard scripts compute from their own
+  # $PSScriptRoot, which is guard\state (they live in guard\, this installer lives at the
+  # repo root). A mismatch is invisible when -StateDir is passed explicitly -- which is
+  # what the install does -- and produces two separate state directories the moment
+  # anyone runs this without the argument, because the loops fall back to their own default.
+  [string]$StateDir    = (Join-Path $PSScriptRoot 'guard\state'),
   [string]$TaskNameGuard   = 'DSH-guard',
-  [string]$TaskNameStarter = 'DSH-start-web'
+  [string]$TaskNameStarter = 'DSH-start-web',
+  [string]$TaskNameWake    = 'DSH-wake'
 )
 
 if ([string]::IsNullOrWhiteSpace($SessionId) -or [string]::IsNullOrWhiteSpace($SessionDir)) {
@@ -44,6 +56,7 @@ if (-not $psExe) { $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShel
 $guardScript   = Join-Path $InstallRoot 'guard\DSH-guard.ps1'
 $loopScript    = Join-Path $InstallRoot 'guard\guard-loop.ps1'
 $starterScript = Join-Path $InstallRoot 'guard\start-dsh-web.ps1'
+$wakeScript    = Join-Path $InstallRoot 'guard\wake.ps1'
 $checkerScript = Join-Path $InstallRoot 'guard\check-raise.js'
 $statusScript  = Join-Path $InstallRoot 'guard\codex-status.js'
 $promptTemplate = Join-Path $InstallRoot 'guard\rescue-prompt.txt'
@@ -61,6 +74,7 @@ $paths = [ordered]@{
   'guard script'        = $guardScript
   'guard loop script'   = $loopScript
   'starter script'      = $starterScript
+  'wake script'         = $wakeScript
   'raise checker (js)'  = $checkerScript
   'codex status (js)'   = $statusScript
   'prompt template'     = $promptTemplate
@@ -90,27 +104,42 @@ foreach ($k in $paths.Keys) {
 $guardArgs = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -StateDir "{1}" -UserHome "{2}" -SessionId "{3}" -SessionDir "{4}"' -f `
              $guardScript, $StateDir, $UserHome, $SessionId, $SessionDir
 $starterArgs = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -StateDir "{1}"' -f $starterScript, $StateDir
+# No arguments: a scheduled task takes none, and wake.ps1 reads the reason from the
+# wake.reason file the agent tool drops beside it.
+$wakeArgs = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $wakeScript
 
 Write-Host ''
 Write-Host 'Scheduled tasks that will be registered (nothing is registered yet):'
 Write-Host ''
 Write-Host ('  [1] {0}' -f $TaskNameGuard)
 Write-Host ('      run as   : NT AUTHORITY\SYSTEM  (LogonType ServiceAccount, RunLevel Highest)')
-Write-Host ('      trigger  : every 1 minute, forever')
+Write-Host ('      trigger  : at startup, plus every 1 minute forever')
 Write-Host ('      action   : {0}' -f $guardScript)
 Write-Host ('      command  : "{0}" {1}' -f $psExe, $guardArgs)
 Write-Host ''
 Write-Host ('  [2] {0}' -f $TaskNameStarter)
-Write-Host ('      run as   : {0}\{1}  (LogonType Interactive, RunLevel Limited)' -f $env:USERDOMAIN, $env:USERNAME)
+Write-Host ('      run as   : {0}\{1}  (LogonType Interactive, RunLevel Highest)' -f $env:USERDOMAIN, $env:USERNAME)
 Write-Host ('      trigger  : none -- on demand; the guard starts it with Start-ScheduledTask')
 Write-Host ('      action   : {0}' -f $starterScript)
 Write-Host ('      command  : "{0}" {1}' -f $psExe, $starterArgs)
+Write-Host ''
+Write-Host ('  [3] {0}' -f $TaskNameWake)
+Write-Host ('      run as   : {0}\{1}  (LogonType Interactive, RunLevel Highest)' -f $env:USERDOMAIN, $env:USERNAME)
+Write-Host ('      trigger  : none -- on demand only; an agent starts it with Start-ScheduledTask')
+Write-Host ('      action   : {0}' -f $wakeScript)
+Write-Host ('      command  : "{0}" {1}' -f $psExe, $wakeArgs)
+Write-Host ''
+Write-Host 'Why DSH-guard gets a startup trigger as well as its minute repetition:'
+Write-Host 'a reboot kills guard-loop.ps1 and lid-loop.ps1, because they are plain processes'
+Write-Host 'and nothing restarts them on their own. The task itself survives the reboot, so the'
+Write-Host 'startup trigger is what turns that recovery into seconds instead of up to a minute,'
+Write-Host 'which is the finest interval Task Scheduler offers for the repetition.'
 Write-Host ''
 Write-Host 'Honest note: the SYSTEM-run guard has no codex on PATH and no user home. It pins'
 Write-Host ('USERPROFILE={0} and CODEX_HOME={1} before it runs anything.' -f $UserHome, (Join-Path $UserHome '.codex'))
 Write-Host ''
 
-$answer = Read-Host 'Register these two tasks? [y/N]'
+$answer = Read-Host 'Register these three tasks? [y/N]'
 if ($answer -notmatch '^(y|yes)$') {
   Write-Host 'Aborted. Nothing was created or registered.'
   exit 1
@@ -137,8 +166,16 @@ if (Test-Path -LiteralPath $promptTemplate) {
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 
-$guardTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date)
-$guardTrigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
+# Two triggers, and the second one is the point. The task survives a reboot; guard-loop.ps1
+# and lid-loop.ps1 do not, because they are plain processes. The boot trigger brings the
+# outer net back within seconds of the machine coming up, and the guard's very first pass
+# then resurrects both loops (see the keep-our-own-runners-alive block in DSH-guard.ps1).
+# The one-minute repetition alone would leave a blind window of up to a minute after boot.
+$guardTrigger = New-ScheduledTaskTrigger -AtStartup
+# The repetition is carried by a SECOND trigger: -AtStartup has no repetition of its own,
+# and the two coexist, so the task fires once at boot and then once a minute forever.
+$guardRepeatTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date)
+$guardRepeatTrigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
   -RepetitionInterval (New-TimeSpan -Minutes 1) `
   -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
 
@@ -147,11 +184,16 @@ $guardPrincipal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\SYSTEM' -Logo
 # with an elevated shell, and a restarted host that quietly has fewer rights than the one
 # it replaces is a different host. Highest means the user's own highest available token.
 $starterPrincipal = New-ScheduledTaskPrincipal -UserId ('{0}\{1}' -f $env:USERDOMAIN, $env:USERNAME) -LogonType Interactive -RunLevel Highest
+# DSH-wake gets the SAME principal, for the same reason and by the same construction: it
+# must run in the interactive user's session, because a process in session 0 has no desktop
+# and no audio session, and its keybd_event injection would reach nobody.
+$wakePrincipal = $starterPrincipal
 
 $guardAction = New-ScheduledTaskAction -Execute $psExe -Argument $guardArgs -WorkingDirectory $InstallRoot
-Register-ScheduledTask -TaskName $TaskNameGuard -Action $guardAction -Trigger $guardTrigger `
+Register-ScheduledTask -TaskName $TaskNameGuard -Action $guardAction `
+  -Trigger @($guardTrigger, $guardRepeatTrigger) `
   -Principal $guardPrincipal -Settings $settings -Force `
-  -Description 'codex-save-dsh guard: one state-machine step, runs as SYSTEM every minute.' | Out-Null
+  -Description 'codex-save-dsh guard: one state-machine step, runs as SYSTEM every minute and once at boot.' | Out-Null
 Write-Host ('registered task {0}' -f $TaskNameGuard)
 
 # No -Trigger: this task exists to be started on demand by the guard.
@@ -161,6 +203,17 @@ Register-ScheduledTask -TaskName $TaskNameStarter -Action $starterAction `
   -Description 'codex-save-dsh starter: bring dsh web up in the interactive user context.' | Out-Null
 Write-Host ('registered task {0}' -f $TaskNameStarter)
 
+# No -Trigger here either: DSH-wake exists to be started on demand, and only by the
+# wake_user tool. It is deliberately not bound to a log level, a phase, or a timer -- a
+# wake is destructive to someone wearing headphones, so the trigger is an agent's decision.
+$wakeAction = New-ScheduledTaskAction -Execute $psExe -Argument $wakeArgs -WorkingDirectory $InstallRoot
+Register-ScheduledTask -TaskName $TaskNameWake -Action $wakeAction `
+  -Principal $wakePrincipal -Settings $settings -Force `
+  -Description 'codex-save-dsh wake: raise the Windows master volume and show a TopMost box, on demand only.' | Out-Null
+Write-Host ('registered task {0}' -f $TaskNameWake)
+
 Write-Host ''
-Write-Host 'Done. The guard task will take its first step within a minute.'
+Write-Host 'Done. The guard task will take its first step within a minute, or immediately if'
+Write-Host 'the machine is rebooted -- the startup trigger covers the case where a reboot killed'
+Write-Host 'the guard-loop and lid-loop processes but not the task that can bring them back.'
 Write-Host ('State and logs live in {0}.' -f $StateDir)

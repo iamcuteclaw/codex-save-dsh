@@ -146,7 +146,8 @@ development from what has only ever been **designed and code-reviewed**.
 
 ### Never fired
 
-* **The `Error` and `FATAL` lines themselves.** No observed run ever produced one.
+* **`FATAL` itself.** No observed run has ever produced one. Its sibling `Error` has now
+  fired once, so the two are no longer the same story -- see below.
 * **The BLOCKED / codex path.** The guard has never actually handed a real failure to the
   second agent; the status-mapping and level code has run only against injected state.
 * **The tailpart guard that keeps the `[blocked]` bracket.** The fix that stops a Warm
@@ -154,7 +155,73 @@ development from what has only ever been **designed and code-reviewed**.
   real `FATAL` line.
 
 These unexercised paths are **designed and code-reviewed, but untested.** Treat a first
-`Error` or `FATAL` in the field as a code path meeting reality for the first time.
+`FATAL` in the field as a code path meeting reality for the first time.
+
+### And one line that has fired exactly once, kept because of how
+
+```
+[16:38:20] Error Yep:[Nope] Nope:[Main,Port] WaitSec=0/s Tryed=0t/min | TrackLost
+```
+
+`Error` was listed above as never having occurred. It occurred at 16:38:20, and what
+produced it was not a broken host but a **double trigger**: two appliers started the host in
+the same second, the second process lost the port race and exited on its own, and for a few
+seconds the guard lost track of which process it was actually watching. It re-found the real
+one, the host came back, and the raise landed 24 seconds after the trigger.
+
+Two consequences, both measured:
+
+* the `Error` line is no longer a virgin code path; and
+* **the double trigger is no longer described as harmless.** The comment in `guard-loop.ps1`
+  reads "a double trigger is harmless: the second dsh web cannot bind 3080 and exits on its
+  own". The second half of that is true -- the losing process did exit -- but it cost a real
+  process launch and an `Error`, and for a few seconds the guard was watching something that
+  was not its target. Recoverable is not the same as harmless, and this file should say what
+  it means. A start claim, in the same spirit as the pid claim that already protects the
+  raise, would close it. That fix is not in this release.
+
+### Measured limits, and what they cost
+
+These were all observed directly tonight. They are written down because each one had
+already caused a wrong conclusion, and a limit that is not written down gets rediscovered.
+
+* **The wake has NO volume readback.** `guard/wake.ps1` injects volume-up key events and
+  reports, in `wake.log`, how many it injected and by which method — never that the volume
+  actually changed. Nothing in this tree reads the master level back from the context the
+  wake runs in, so the script does not claim a level: the only instrument is the human's
+  ears, and the only receipt that a human *saw* the box is the box being dismissed. A wake
+  that returns success means "the keys were sent", not "he is awake".
+* **SendKeys and `keybd_event` are the same keys through different doors.** Measured the
+  same night: `WScript.Shell.SendKeys` did **nothing** when the script was launched by a
+  scheduled task, and reported success while doing it — a task process has no foreground
+  window, and SendKeys delivers to the *active application*. `keybd_event` injects into the
+  system input stream instead, which needs no focus. Both send `VK_VOLUME_UP`; only one
+  arrives. This is why `wake.ps1` calls `keybd_event` from an `Add-Type` block rather than
+  reaching for the convenient one-liner.
+* **A search that expects whitespace around the level word finds almost nothing.** The level
+  word is glued to an ANSI escape: a line reads `[33mWarm`, with no whitespace between the
+  escape and the word. Any test requiring a space on both sides therefore measures only the
+  handful of lines that carry no colour at all. Measured on 2026-09-29: a spaced search for
+  `Silly` returned **12** where a plain substring search returned **6148**. Two independent
+  measurers, using two different instruments, both landed on that same 12 and both reported
+  the coloured levels as never having fired, on a log where they fire constantly. Anyone who
+  greps this log must search for the substring.
+  (This paragraph first blamed a `\bWarm\b` word-boundary search. The auditor's instrument
+  was a plain `' Warm '` SimpleMatch. A correction about someone else's method is a claim
+  like any other, and that one was wrong -- which is itself the point.)
+  A third demand this log makes: it grows once a second, so two honest counts taken minutes
+  apart are counts of two different populations. Record the timestamp with the number, or the
+  number means nothing.
+* **The permission presets are not a dial.** `read-only` asks for every tool call;
+  `danger-full-access` never asks. Measured side by side on the same host, and they are the
+  two ends of one setting rather than two points on a scale: there is no preset that asks
+  for the dangerous calls only. The choice is therefore a property of the whole session,
+  made before the work starts, not a decision per action.
+  Related, and measured on the human side: **the wake's own box was mistaken by the operator
+  for a permission prompt.** He read a TopMost modal dialog with an `OK` button as something
+  asking his approval and waited for it. It asks for nothing. The box now says so in as many
+  words, but the misreading is the reason that sentence exists, and it is the reason the
+  wake is documented here as a *notice* rather than a request.
 
 ## 6. Install
 
@@ -163,13 +230,28 @@ These unexercised paths are **designed and code-reviewed, but untested.** Treat 
 .\install.ps1 -SessionId <SESSION-ID> -SessionDir <SESSION-DIR>
 ```
 
-`install.ps1` prints every path it will use and the exact two scheduled tasks it will
-register, then asks for `y/N` before it creates or registers anything. It creates the state
-directory, writes a substituted copy of the rescue prompt into it, and registers:
+`install.ps1` prints every path it will use and the exact three scheduled tasks it will
+register, then asks for `y/N` before it creates or registers anything. The printed plan and
+the registration are built from the same variables, so the plan cannot describe a task the
+script does not go on to register — a defect of exactly that kind (the starter's `RunLevel`
+shown in the plan but not applied to the principal) lived in this file and was fixed. It
+creates the state directory, writes a substituted copy of the rescue prompt into it, and
+registers:
 
-* **`DSH-guard`** — `NT AUTHORITY\SYSTEM`, every minute, one guard step per run.
+* **`DSH-guard`** — `NT AUTHORITY\SYSTEM`, **at startup and then every minute**, one guard
+  step per run. Two triggers, deliberately: a reboot kills `guard-loop.ps1` and
+  `lid-loop.ps1`, because they are plain processes with nothing to restart them, while the
+  task itself survives the reboot. The startup trigger is what makes that recovery take
+  seconds instead of up to a minute — one minute being the finest interval Task Scheduler
+  offers for a repetition. The guard's first pass after boot is what brings both loops back.
 * **`DSH-start-web`** — the interactive user, **on demand only**, no trigger; the guard
   starts it with `Start-ScheduledTask`.
+* **`DSH-wake`** — the interactive user, **on demand only**, no trigger; the `wake_user`
+  agent tool starts it with `Start-ScheduledTask`. It must run in the interactive session,
+  because a session-0 process has no desktop and no audio session, and its `keybd_event`
+  injection would then reach nobody. It is deliberately bound to no timer, no log level and
+  no phase: a wake is destructive to a person wearing headphones, so the trigger is an
+  agent's decision and nothing else.
 
 **`-SessionId` must be supplied explicitly, every time.** There is no default, and there
 will not be one. A watchdog that guessed someone's session id would raise the wrong
@@ -182,13 +264,52 @@ back from, and it cannot be inferred from the id alone.
   the guard would then read the wrong codex config, auth and goal store.
 * The optional 1 Hz loop (`guard/guard-loop.ps1`) is for tight watching and is meant to be
   launched as SYSTEM in the same way. It forwards `-StateDir`, `-UserHome`, `-SessionId` and
-  `-SessionDir` to the guard verbatim.
+  `-SessionDir` to the guard verbatim. Every 10 s it also checks the lid sampler is alive
+  and revives it if it is not, using the same two tests the guard uses.
 * The companion plugin under `lid-beacon/` turns the beacon state file into the delivered
-  notice. Its state directory defaults to the guard's state directory, or to
-  `CODEX_SAVE_DSH_STATE_DIR` when that is set; `config.statePath` and `config.subscribersPath`
-  override both.
+  notice, and registers **four** agent tools: `lid_beacon_target` (subscribe or
+  unsubscribe *this* conversation from lid notices; nothing else can subscribe it),
+  `lid_closed` (read-only: is the panel off right now, how old is that reading, and is
+  anything sampling — a `CLOSED` reading means **the human is absent**, so a question asked
+  then waits forever and must not be asked), `wake_user` (loud, requires a `reason`,
+  refuses without one, never automatic), and `see_screen` (capture the whole desktop and
+  return it as an image; it captures **everything** currently on screen — including
+  anything private that happens to be visible — so it is called for a reason and never on
+  a timer, and it must run in the interactive session, because the same call from session
+  0 comes back black). Its state directory defaults to the guard's state
+  directory, or to `CODEX_SAVE_DSH_STATE_DIR` when that is set; `config.statePath` and
+  `config.subscribersPath` override both. Registration failures are also appended to
+  `lid-beacon.err` beside the state file, because a tool that silently fails to register is
+  indistinguishable from a tool that was never needed.
 
-## 7. Limitations
+## 7. The rest of the guard tree
+
+Two scripts in `guard/` are for the operator rather than for the loop, and both were
+previously undocumented:
+
+* **`guard/kill-dsh-web.ps1` — the deliberately dangerous one.** It stops the watched host
+  on purpose, so the whole self-heal chain has to bring it back and raise the session, which
+  is how the rescue path gets tested end to end instead of being trusted. It matches its
+  target by command line rather than by a pid remembered from an earlier turn, and it sleeps
+  first (`-DelaySeconds`, 30 by default) so the message announcing the test is delivered
+  before the harness dies — killing the host kills the tree the announcing turn runs in. It
+  writes to `danger.log`. **Running it kills `dsh web`.** That is its entire purpose, and an
+  operator has to be able to see that before running it, not after.
+* **`guard/system-probe.ps1`** — proves a SYSTEM-context process can actually reach the
+  second agent and its goal store once `USERPROFILE` and `CODEX_HOME` are pinned. It is the
+  check that stands behind the "the codex path works under SYSTEM" claim, and it writes its
+  result to `system-probe.log` because PsExec does not return stdout. The thread ids it
+  re-reads are inputs (`-BlockedThreadId`, `-PausedThreadId`), never baked in.
+* **`guard/see-screen.ps1`** — the one script in `guard/` that belongs to neither the loop
+  nor the operator: the `see_screen` tool runs it. It captures the whole virtual desktop to
+  a PNG and prints exactly one parseable line, `<width>x<height>:<bytes>`. **It must run in
+  the interactive session** — the same code from session 0 (SYSTEM) comes back a black
+  frame — and that is the whole reason `see_screen` lives in the plugin, which runs in the
+  user's session, rather than in the guard. The PNG is written into the **state** directory,
+  never beside the script: a picture of the desktop is precisely the kind of file the
+  published tree must not be able to commit.
+
+## 8. Limitations
 
 * **If the model-router proxy the second agent depends on is dead, there is no rescue.**
   The guard can start a host and raise a session; it cannot make the network or a proxy
@@ -202,7 +323,7 @@ back from, and it cannot be inferred from the id alone.
   store is unreadable, the guard says it cannot tell you (`Codex?CANNOT_OPEN`), not
   "blocked".
 
-## 8. Design rules the code obeys
+## 9. Design rules the code obeys
 
 * **Prefer behavioural checks over textual ones.** "The port is listening and the process
   matches" is the event; "a command returned" or "a version printed" is only a symptom.
@@ -215,11 +336,11 @@ back from, and it cannot be inferred from the id alone.
   the second agent's own goal store, word for word.
 * **If a mechanism can fail silently at the moment it is needed, it is not a mechanism.**
 
-## 9. License
+## 10. License
 
 MIT. See [LICENSE](LICENSE). Copyright (c) 2026 iamcuteclaw.
 
-## 10. Main developer
+## 11. Main developer
 
 **101.0000% DeepSeek.**
 

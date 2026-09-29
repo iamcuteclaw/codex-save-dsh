@@ -31,7 +31,7 @@
 # default session directory: -SessionId and -SessionDir are REQUIRED. A tool that
 # guessed someone's session id would be worse than useless.
 #
-# ASCII only, deliberately: PS 5.1 mis-decodes non-BOM UTF-8 literals.
+# Non-ASCII is avoided: PS 5.1 mis-decodes non-BOM UTF-8 literals.
 param(
   [int]$AbsenceSeconds  = 5,
   [int]$SettleSeconds   = 10,
@@ -52,6 +52,56 @@ $pidFile    = Join-Path $StateDir 'guard-last-web-pid.txt'
 $triesFile  = Join-Path $StateDir 'guard-codex-tries.txt'
 $lidState   = Join-Path $StateDir 'lid.state'
 $startedOut = Join-Path $StateDir 'dshweb-started.log'
+# --- keep our own runners alive ---------------------------------------------------------
+# A reboot kills guard-loop.ps1 and lid-loop.ps1 -- they are plain processes and nothing
+# brings them back on its own. The scheduled task DOES survive a reboot, so this is where
+# they get resurrected: the first pass of every process runs the check, then it is
+# throttled so the 1 Hz caller does not pay for it on every pass.
+#
+# The task stays at one minute (that is the finest Task Scheduler offers), so the boot
+# trigger added to it (install.ps1) is what makes the post-reboot path fast instead of up
+# to a minute.
+#
+# Liveness: lid-loop by its own log's freshness (it writes one line per 5 s pass);
+# guard-loop by its process, because it logs only when it starts or relaunches something.
+# Both relaunches go through PsExec with -s -realtime -d, the same way the loops were
+# started by hand -- a child of a scheduled task gets reaped, a detached one does not.
+# The throttle lives in a FILE, not in a variable: guard-loop calls this script with `&`
+# once per second, and every call gets a fresh script scope -- so a variable would make the
+# check run on all 3600 passes an hour, putting a CIM process scan inside the 1 Hz loop.
+# The loop scripts sit beside this one; only their state and logs live in $StateDir.
+$loopsCheckFile = Join-Path $StateDir 'guard-loops-checked.txt'
+$loopsDir       = $PSScriptRoot
+$psexecExe      = Join-Path $env:SystemRoot 'System32\PsExec.exe'
+$loopsDue = $true
+if (Test-Path -LiteralPath $loopsCheckFile) {
+  try {
+    $loopsDue = ((Get-Date) - [datetime]::Parse((Get-Content -LiteralPath $loopsCheckFile -Raw).Trim())).TotalSeconds -ge 15
+  } catch { $loopsDue = $true }
+}
+if ($loopsDue) {
+  Set-Content -LiteralPath $loopsCheckFile -Value ((Get-Date).ToString('o')) -Encoding ascii
+  try {
+    $psList = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue)
+    if (@($psList | Where-Object { $_.CommandLine -like '*guard-loop.ps1*' }).Count -eq 0) {
+      Add-Content -Path $log -Value ('[{0}] guard-loop missing -> relaunching' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
+      & $psexecExe -accepteula -nobanner -s -realtime -d powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $loopsDir 'guard-loop.ps1') -StateDir $StateDir 2>&1 | Out-Null
+    }
+    # Lid sampler: TWO tests, because either one alone has a blind spot.
+    #   - no process at all  -> it was just killed; its log is still fresh, so freshness
+    #     alone reads a freshly killed sampler as healthy. This test catches that.
+    #   - log stopped moving -> it is on the process list but no longer passing. This test
+    #     catches a hung loop, which the process test cannot see.
+    $lidLogPath = Join-Path $StateDir 'lid-loop.log'
+    $lidAge = 9999
+    if (Test-Path $lidLogPath) { $lidAge = [math]::Round(((Get-Date) - (Get-Item $lidLogPath).LastWriteTime).TotalSeconds) }
+    $lidProc = @($psList | Where-Object { $_.CommandLine -like '*lid-loop.ps1*' }).Count
+    if ($lidProc -eq 0 -or $lidAge -gt 20) {
+      Add-Content -Path $log -Value ('[{0}] lid-loop down (proc={1} log_age={2}s) -> relaunching' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $lidProc, $lidAge)
+      & $psexecExe -accepteula -nobanner -s -realtime -d powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $loopsDir 'lid-loop.ps1') -StateDir $StateDir 2>&1 | Out-Null
+    }
+  } catch { }
+}
 $codexOut   = Join-Path $StateDir 'codex-rescue.out'
 $maintFile  = Join-Path $StateDir 'MAINTENANCE'
 # The prompt ships next to this script as a template carrying <SESSION-ID> and

@@ -8,5 +8,9 @@ guard-last-web-pid.txt
 guard-web-pid.txt
 guard-codex-tries.txt
 guard-absent-since.txt
+guard-loops-checked.txt
 lid.state
 lid.subscribers.json
+lid.sample-now
+wake.reason
+screen.png
