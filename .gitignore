@@ -1,0 +1,12 @@
+state/
+*.log
+*.out
+*.err
+*.bak
+guard-state.txt
+guard-last-web-pid.txt
+guard-web-pid.txt
+guard-codex-tries.txt
+guard-absent-since.txt
+lid.state
+lid.subscribers.json

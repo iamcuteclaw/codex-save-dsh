@@ -1,0 +1,6 @@
+# dsh-lid-beacon: broadcasts a notice to subscribed conversations when the
+# laptop lid closes (panel powers off). Mounted by hand so the patch watcher
+# picks it up without a bundle row.
+- insert:
+    - id: lid-beacon
+      name: dsh-lid-beacon
