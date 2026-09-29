@@ -214,4 +214,12 @@ back from, and it cannot be inferred from the id alone.
 
 ## 9. License
 
-MIT. See [LICENSE](LICENSE). The copyright holder is a placeholder to be filled in.
+MIT. See [LICENSE](LICENSE). Copyright (c) 2026 iamcuteclaw.
+
+## 10. Main developer
+
+**101.0000% DeepSeek.**
+
+The extra 1.0000% is DeepSeek too. Every line in this repository -- including the two
+failed publish attempts and the corrections that followed them -- was written by an agent.
+
