@@ -314,12 +314,19 @@ export function apply(ctx, config = {}) {
   // goes to the STATE directory on purpose: it is a picture of whatever happened to be on
   // screen, and the state directory is the one place the published tree already ignores.
   //
-  // The image block shape is taken from the harness's own ToolError documentation:
-  //   { type: 'image', source: { type: 'base64', data: '...', media_type: 'image/png' } }
+  // DO NOT RETURN THE IMAGE FROM A PLUGIN RENDER. An earlier version of this tool built an
+  // image block -- { type: 'image', source: { type: 'base64', data: '...', media_type:
+  // 'image/png' } } -- and returned it from here. Measured 2026-09-29 17:02-17:04: after
+  // such a result, EVERY request from that session failed instantly, code TRANSPORT, about
+  // 35 ms, the request never left the machine, on a capture of 114,782 base64 characters.
+  // The session was repaired out of band by removing the image from its context again, and
+  // it was NOT the harness that did that. What the stored failure does not contain is any
+  // HTTP status and any cause, so the mechanism is not knowable from what was kept -- this
+  // records the shape that preceded the failure, and the shape used instead.
   try {
     ctx.tools.register(defineTool({
       name: 'see_screen',
-      description: 'Look at the desktop: capture the whole screen and return it as an image. Use it when a picture is the only way to know what happened -- a dialog nobody clicked, a window something landed behind, a crash. It captures EVERYTHING currently on screen, including anything private that happens to be visible, so call it when you have a reason, not on a timer. It must run in the interactive session: from session 0 the frame comes back black.',
+      description: 'Look at the desktop: capture the whole screen to a PNG and return its PATH, not the picture. It does not hand you an image; read the file it names with the read_image tool. Use it when a picture is the only way to know what happened -- a dialog nobody clicked, a window something landed behind, a crash. It captures EVERYTHING currently on screen, including anything private that happens to be visible, so call it when you have a reason, not on a timer. It must run in the interactive session: from session 0 the frame comes back black.',
       parameters: {},
       output: {
         schema: {
@@ -334,25 +341,17 @@ export function apply(ctx, config = {}) {
             error: { type: 'string', required: true },
           },
         },
-        // TEXT ONLY, WITH A PATH. Never the image itself.
-        //
-        // Measured 2026-09-29 17:04: a call that returned
-        // { type: 'image', source: { type: 'base64', ... } } out of a plugin render made
-        // EVERY request from that session fail instantly -- code TRANSPORT, ~35 ms, the
-        // request never left the machine -- on an 85 KB capture. The harness repaired the
-        // session by stripping the image back out of the context. The built-in read_image
-        // tool can return images because it goes through the harness's own path, which
-        // offloads them; a plugin render cannot. So this tool captures, says where the file
-        // is, and the seeing is done by read_image.
+        // Text and a path. The reason, and what is NOT known about it, are in the comment
+        // above this registration.
         render: (_args, value) => {
           if (!value.captured) {
             return [{ type: 'text', text: `see_screen: capture failed (${value.error || 'no detail'})` }];
           }
-          // The wording is the harness's own, taken from the placeholder it writes when it
-          // stores an image: [Image: "<path>"; image/png; 1280x800. Use read_image to view it.]
-          // Using that exact form means whatever recognises those placeholders downstream
-          // recognises this one. And the path is the whole point: the PNG is already on disk,
-          // so this step contains no unknown.
+          // MODELLED ON the placeholder the harness writes when it stores an image -- not
+          // byte-identical to it. The harness emits JSON.stringify of an attachment-store
+          // path, which escapes backslashes, and it can guarantee that path is readable. This
+          // is a bare disk path: fine under danger-full-access, and possibly refused by
+          // read_image under a narrower sandbox. Stated rather than promised away.
           return [{
             type: 'text',
             text: `[Image: "${value.path}"; image/png; ${value.width}x${value.height}. Use read_image to view it.]`
