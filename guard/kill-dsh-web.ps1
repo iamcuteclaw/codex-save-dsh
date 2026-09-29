@@ -8,9 +8,21 @@
 #   * It sleeps first, so the message announcing the test is delivered before dsh
 #     dies. Killing dsh kills the harness tree this turn runs in.
 #
+# How long that sleep has to be, measured rather than guessed: on 2026-09-30 03:45
+# the announcement was out and the operator killed the host by hand about 15 s
+# later, because 30 s was longer than the operator was willing to wait. So 30 was
+# longer than the thing it protects. It now defaults to 10: long enough for the
+# announcing text to be readable, short enough that nobody reaches past it. Pass
+# -DelaySeconds when the announcing turn still has a long tail after this is armed.
+#
+# Known limitation, learned the hard way the same minute: the sleep runs inside a
+# process the harness tree owns, so if the host dies during the sleep -- by any
+# other hand -- this task dies with it and never reaches the kill. It can be one
+# of the killers, never the only one.
+#
 # ASCII only, deliberately: PS 5.1 mis-decodes non-BOM UTF-8 literals.
 param(
-  [int]$DelaySeconds = 30,
+  [int]$DelaySeconds = 10,
   [string]$StateDir = (Join-Path $PSScriptRoot 'state')
 )
 $log = Join-Path $StateDir 'danger.log'
