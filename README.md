@@ -1,8 +1,8 @@
-# DSH-vigil
+# codex-save-dsh
 
 ## 1. What it is
 
-DSH-vigil is a watchdog for a long-running **local agent host** — in the deployment it was
+codex-save-dsh is a watchdog for a long-running **local agent host** — in the deployment it was
 built for, the DeepSeek Harness (`dsh web`) listening on `127.0.0.1:3080`. It watches the
 host process; if the host dies it starts it again; once the host is back it raises the
 **agent session** that was watching the problem, by writing a line to a small state file
@@ -182,7 +182,7 @@ back from, and it cannot be inferred from the id alone.
   `-SessionDir` to the guard verbatim.
 * The companion plugin under `lid-beacon/` turns the beacon state file into the delivered
   notice. Its state directory defaults to the guard's state directory, or to
-  `DSH_VIGIL_STATE_DIR` when that is set; `config.statePath` and `config.subscribersPath`
+  `CODEX_SAVE_DSH_STATE_DIR` when that is set; `config.statePath` and `config.subscribersPath`
   override both.
 
 ## 7. Limitations

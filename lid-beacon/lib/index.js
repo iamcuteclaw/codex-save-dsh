@@ -22,13 +22,13 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 export const name = 'lid-beacon';
 export const inject = ['agents', 'typert', 'tools'];
 
-// State paths are resolved, never hardcoded. DSH_VIGIL_STATE_DIR wins when a
+// State paths are resolved, never hardcoded. CODEX_SAVE_DSH_STATE_DIR wins when a
 // deployment keeps state elsewhere; otherwise this points at the guard's own
 // default state directory inside the repo. A host that guessed a local path would
 // be worse than useless, and config.statePath / config.subscribersPath still
 // override both below.
 const HERE = dirname(fileURLToPath(import.meta.url));
-const STATE_DIR = process.env.DSH_VIGIL_STATE_DIR || join(HERE, '..', '..', 'guard', 'state');
+const STATE_DIR = process.env.CODEX_SAVE_DSH_STATE_DIR || join(HERE, '..', '..', 'guard', 'state');
 const DEFAULT_STATE = join(STATE_DIR, 'lid.state');
 const DEFAULT_SUBS = join(STATE_DIR, 'lid.subscribers.json');
 

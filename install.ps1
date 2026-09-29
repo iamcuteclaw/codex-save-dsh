@@ -1,4 +1,4 @@
-# install.ps1 -- register the two scheduled tasks DSH-vigil needs.
+# install.ps1 -- register the two scheduled tasks codex-save-dsh needs.
 #
 # ASCII only, deliberately: PS 5.1 mis-decodes non-BOM UTF-8 literals.
 #
@@ -76,7 +76,7 @@ $paths = [ordered]@{
 }
 
 Write-Host ''
-Write-Host '=== DSH-vigil install plan ==='
+Write-Host '=== codex-save-dsh install plan ==='
 Write-Host ''
 Write-Host 'Paths:'
 foreach ($k in $paths.Keys) {
@@ -151,14 +151,14 @@ $starterPrincipal = New-ScheduledTaskPrincipal -UserId ('{0}\{1}' -f $env:USERDO
 $guardAction = New-ScheduledTaskAction -Execute $psExe -Argument $guardArgs -WorkingDirectory $InstallRoot
 Register-ScheduledTask -TaskName $TaskNameGuard -Action $guardAction -Trigger $guardTrigger `
   -Principal $guardPrincipal -Settings $settings -Force `
-  -Description 'DSH-vigil guard: one state-machine step, runs as SYSTEM every minute.' | Out-Null
+  -Description 'codex-save-dsh guard: one state-machine step, runs as SYSTEM every minute.' | Out-Null
 Write-Host ('registered task {0}' -f $TaskNameGuard)
 
 # No -Trigger: this task exists to be started on demand by the guard.
 $starterAction = New-ScheduledTaskAction -Execute $psExe -Argument $starterArgs -WorkingDirectory $InstallRoot
 Register-ScheduledTask -TaskName $TaskNameStarter -Action $starterAction `
   -Principal $starterPrincipal -Settings $settings -Force `
-  -Description 'DSH-vigil starter: bring dsh web up in the interactive user context.' | Out-Null
+  -Description 'codex-save-dsh starter: bring dsh web up in the interactive user context.' | Out-Null
 Write-Host ('registered task {0}' -f $TaskNameStarter)
 
 Write-Host ''
