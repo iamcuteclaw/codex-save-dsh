@@ -348,10 +348,15 @@ export function apply(ctx, config = {}) {
           if (!value.captured) {
             return [{ type: 'text', text: `see_screen: capture failed (${value.error || 'no detail'})` }];
           }
+          // The wording is the harness's own, taken from the placeholder it writes when it
+          // stores an image: [Image: "<path>"; image/png; 1280x800. Use read_image to view it.]
+          // Using that exact form means whatever recognises those placeholders downstream
+          // recognises this one. And the path is the whole point: the PNG is already on disk,
+          // so this step contains no unknown.
           return [{
             type: 'text',
-            text: `see_screen: captured ${value.width}x${value.height} (${value.bytes} bytes) to ${value.path}`
-              + ' -- now read it with the read_image tool. This tool deliberately does not return the image itself.',
+            text: `[Image: "${value.path}"; image/png; ${value.width}x${value.height}. Use read_image to view it.]`
+              + ` (see_screen; ${value.bytes} bytes)`,
           }];
         },
       },
