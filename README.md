@@ -222,6 +222,19 @@ already caused a wrong conclusion, and a limit that is not written down gets red
   asking his approval and waited for it. It asks for nothing. The box now says so in as many
   words, but the misreading is the reason that sentence exists, and it is the reason the
   wake is documented here as a *notice* rather than a request.
+* **A plugin render must not return an image.** Measured 2026-09-29 17:02-17:04: a
+  `see_screen` tool result carrying an inline base64 PNG -- 114,782 characters -- was followed
+  by every request from that session failing as `TRANSPORT` in about 35 ms, without ever
+  leaving the machine. What was stored does **not** say why: no HTTP status, no cause. So the
+  mechanism is not knowable from the record, and this file does not pretend otherwise. What
+  changed is the shape: the tool now returns text plus a path, using the placeholder form the
+  harness itself writes when it stores an image, and `read_image` does the seeing. Anyone
+  writing a plugin tool that wants to hand back a picture should read this paragraph first --
+  the built-in `read_image` can do it precisely because it is not a plugin.
+  (That placeholder is *modelled on* the harness's, not byte-identical to it: the harness
+  emits a JSON-escaped attachment-store path it can guarantee is readable, while this is a
+  bare disk path -- fine under `danger-full-access`, possibly refused under a narrower
+  sandbox.)
 
 ## 6. Install
 
