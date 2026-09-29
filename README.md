@@ -134,8 +134,13 @@ development from what has only ever been **designed and code-reviewed**.
   guard waits, so a second pass cannot raise the same session twice.
 * **The settle-before-raise fix.** The guard waits for the host to settle before it raises,
   and the settle gate was observed holding the raise back during settling.
-* **A real 24-second recovery cycle.** Absence detected, starter triggered, host back,
-  settle, raise written, receipt found — end to end, in 24 seconds.
+* **Two complete recovery cycles, timed from the log.** 24 s and 22 s, both end to end:
+  absence detected, starter triggered, host back, settle, raise written, receipt found. The
+  second cycle also shows the process returning before the port does, so the `Yep` list is
+  visibly `[Main]` for a second before it becomes `[Main,Port]`.
+* **The `WaitSec` recompute fix.** Written, then exercised by a real absence. The same field
+  read `1057` under the old code -- a stale timestamp borrowed from the previous phase -- and
+  `0` under the new one, counting up from there.
 * **The SYSTEM-context codex probe.** A SYSTEM-context process was shown to reach the
   second agent and its goal store once `USERPROFILE`/`CODEX_HOME` were pinned.
 
@@ -144,8 +149,6 @@ development from what has only ever been **designed and code-reviewed**.
 * **The `Error` and `FATAL` lines themselves.** No observed run ever produced one.
 * **The BLOCKED / codex path.** The guard has never actually handed a real failure to the
   second agent; the status-mapping and level code has run only against injected state.
-* **The `WaitSec` recompute fix.** The correction that makes the wait come from the state
-  just written has not been exercised by a real absence since it was made.
 * **The tailpart guard that keeps the `[blocked]` bracket.** The fix that stops a Warm
   branch from wiping a bracket set by the codex-status branch has never been reached by a
   real `FATAL` line.
